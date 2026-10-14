@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zomato Architecture Animation</title>
+    <!-- Professional vector icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        
+        body {
+            background: #0f172a;
+            color: white;
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+        #video-frame {
+            width: 100%;
+            max-width: 800px;
+            aspect-ratio: 1 / 1;
+            background: #1e293b;
+            border-radius: 16px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+            position: relative;
+            overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        .node {
+            position: absolute;
+            transform: translate(-50%, -50%) scale(0);
+            padding: 12px 20px; /* Slightly refined padding */
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 14px; /* Reduced slightly to prevent clutter */
+            letter-spacing: 0.5px;
+            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.4);
+            transition: all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+            z-index: 10;
+            text-align: center;
+            min-width: 150px;
+            border: 1px solid rgba(255,255,255,0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .node i {
+            font-size: 16px;
+        }
+        .node.visible {
+            transform: translate(-50%, -50%) scale(1);
+        }
+        .node.highlight {
+            transform: translate(-50%, -50%) scale(1.1);
+            box-shadow: 0 0 25px 8px rgba(255,255,255,0.25);
+        }
+        .packet {
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            background: #fff;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 15px 5px rgba(255,255,255,0.7);
+            transition: top 1s ease-in-out, left 1s ease-in-out;
+            z-index: 20;
+        }
+        .packet.websocket {
+            background: #4ade80;
+            box-shadow: 0 0 18px 6px rgba(74, 222, 128, 0.7);
+        }
+        .pulse {
+            position: absolute;
+            width: 40px;
+            height: 40px;
+            background: transparent;
+            border: 2px solid #fff;
+            border-radius: 50%;
+            transform: translate(-50%, -50%) scale(0.5);
+            opacity: 1;
+            animation: pulseAnim 0.8s ease-out forwards;
+            z-index: 5;
+        }
+        @keyframes pulseAnim {
+            to { transform: translate(-50%, -50%) scale(2.5); opacity: 0; }
+        }
+        #subtitle-box {
+            position: absolute;
+            bottom: 25px; /* Lowered safely out of the way */
+            left: 50%;
+            transform: translateX(-50%);
+            width: 85%;
+            background: rgba(0,0,0,0.75);
+            padding: 16px 24px;
+            border-radius: 12px;
+            text-align: center;
+            font-size: 17px;
+            font-weight: 600;
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255,255,255,0.15);
+            z-index: 30;
+            opacity: 0;
+            transition: opacity 0.4s;
+            box-sizing: border-box;
+        }
+        #replay {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: #cb202d;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 800;
+            display: none;
+            z-index: 40;
+            transition: background 0.2s;
+        }
+        #replay:hover { background: #e02835; }
+        svg line { transition: opacity 0.5s; }
+    </style>
+</head>
+<body>
+
+    <div id="video-frame">
+        <div id="canvas"></div>
+        <div id="subtitle-box"></div>
+        <button id="replay" onclick="startAnimation()">↻ Replay Animation</button>
+    </div>
+
+    <script>
+        // FIXED Y-AXIS GRID: Evenly spaced to avoid the bottom text box
+        const layout = {
+            user:       { x: 50, y: 10, name: '<i class="fa-solid fa-mobile-screen-button"></i> Mobile App', color: '#fff', bg: '#cb202d' },
+            gateway:    { x: 50, y: 25, name: '<i class="fa-solid fa-network-wired"></i> API Gateway', color: '#fff', bg: '#334155' },
+            order:      { x: 50, y: 40, name: '<i class="fa-solid fa-cart-arrow-down"></i> Order Service', color: '#fff', bg: '#2563eb' },
+            redis:      { x: 20, y: 40, name: '<i class="fa-solid fa-bolt"></i> Redis Cache', color: '#fff', bg: '#dc2626' },
+            postgres:   { x: 50, y: 58, name: '<i class="fa-solid fa-database"></i> PostgreSQL', color: '#fff', bg: '#0288d1' },
+            kafka:      { x: 80, y: 40, name: '<i class="fa-solid fa-layer-group"></i> Apache Kafka', color: '#000', bg: '#f59e0b' },
+            restaurant: { x: 80, y: 58, name: '<i class="fa-solid fa-utensils"></i> Restaurant', color: '#fff', bg: '#16a34a' },
+            delivery:   { x: 80, y: 74, name: '<i class="fa-solid fa-motorcycle"></i> Dispatch', color: '#fff', bg: '#9333ea' }
+        };
+
+        const timeline = [
+            { t: 1000,  text: "1. User places a food order on the Zomato App", action: () => revealNode('user') },
+            { t: 3000, text: "2. The request hits the API Gateway for Auth & Rate Limiting", action: () => { revealNode('gateway'); sendPacket('user', 'gateway'); } },
+            { t: 5500, text: "3. API Gateway routes traffic to the Order Microservice", action: () => { revealNode('order'); sendPacket('gateway', 'order'); } },
+            { t: 8000, text: "4. Fast menu/session data is checked & cached in Redis", action: () => { revealNode('redis'); sendPacket('order', 'redis'); setTimeout(()=>sendPacket('redis', 'order', false, true), 800); } },
+            { t: 11000, text: "5. ACID Transaction (Payment & Order State) saved in PostgreSQL", action: () => { revealNode('postgres'); sendPacket('order', 'postgres'); } },
+            { t: 13500, text: "6. Order Service publishes 'OrderCreated' event to Apache Kafka", action: () => { revealNode('kafka'); sendPacket('order', 'kafka'); } },
+            { t: 16500, text: "7. Kafka streams the event to asynchronous domain microservices", action: () => { revealNode('restaurant'); revealNode('delivery'); sendPacket('kafka', 'restaurant'); sendPacket('kafka', 'delivery'); } },
+            { t: 19500, text: "8. Restaurant Service alerts the kitchen to prepare the food", action: () => { highlightNode('restaurant'); } },
+            { t: 22000, text: "9. Dispatch Service matches the order with the nearest Rider", action: () => { highlightNode('delivery'); } },
+            { t: 25000, text: "10. Live ETA is pushed directly to the User via WebSockets", action: () => { sendPacket('delivery', 'user', true); } },
+            { t: 28500, text: "Architecture successfully scaled for millions of orders! 🚀", action: () => { pulseAll(); document.getElementById('replay').style.display='block'; } }
+        ];
+
+        let timers = [];
+
+        function drawLine(fromId, toId, isWebSocket) {
+            const from = layout[fromId];
+            const to = layout[toId];
+            const svg = document.getElementById('lines-layer');
+            const lineId1 = `line-${fromId}-${toId}`;
+            const lineId2 = `line-${toId}-${fromId}`;
+            
+            if(document.getElementById(lineId1) || document.getElementById(lineId2)) return;
+            
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('id', lineId1);
+            line.setAttribute('x1', from.x + '%');
+            line.setAttribute('y1', from.y + '%');
+            line.setAttribute('x2', to.x + '%');
+            line.setAttribute('y2', to.y + '%');
+            line.setAttribute('stroke', isWebSocket ? 'rgba(74, 222, 128, 0.4)' : 'rgba(255,255,255,0.2)');
+            line.setAttribute('stroke-width', isWebSocket ? '3' : '2');
+            line.setAttribute('stroke-dasharray', '8,8');
+            line.style.opacity = '0';
+            svg.appendChild(line);
+            
+            setTimeout(() => line.style.opacity = '1', 50);
+        }
+
+        function sendPacket(fromId, toId, isWebSocket = false, isReturn = false) {
+            drawLine(fromId, toId, isWebSocket);
+            
+            const from = layout[fromId];
+            const to = layout[toId];
+            
+            const packet = document.createElement('div');
+            packet.className = 'packet';
+            if (isWebSocket) packet.classList.add('websocket');
+            
+            packet.style.left = from.x + '%';
+            packet.style.top = from.y + '%';
+            document.getElementById('canvas').appendChild(packet);
+            
+            packet.offsetWidth; // Trigger reflow
+            
+            packet.style.left = to.x + '%';
+            packet.style.top = to.y + '%';
+            
+            setTimeout(() => {
+                const pulse = document.createElement('div');
+                pulse.className = 'pulse';
+                pulse.style.left = to.x + '%';
+                pulse.style.top = to.y + '%';
+                if(isWebSocket) pulse.style.borderColor = '#4ade80';
+                document.getElementById('canvas').appendChild(pulse);
+                setTimeout(() => pulse.remove(), 800);
+                packet.remove();
+            }, 1000);
+        }
+
+        function revealNode(id) {
+            document.getElementById(id).classList.add('visible');
+        }
+
+        function highlightNode(id) {
+            const el = document.getElementById(id);
+            el.classList.add('highlight');
+            setTimeout(() => el.classList.remove('highlight'), 1500);
+        }
+
+        function pulseAll() {
+            for (const id of Object.keys(layout)) highlightNode(id);
+        }
+
+        function startAnimation() {
+            timers.forEach(t => clearTimeout(t));
+            timers = [];
+            document.getElementById('replay').style.display = 'none';
+            document.getElementById('subtitle-box').style.opacity = '0';
+            
+            const canvas = document.getElementById('canvas');
+            canvas.innerHTML = '<svg id="lines-layer" style="position:absolute; top:0; left:0; width:100%; height:100%; z-index:0;"></svg>';
+            
+            for (const [id, data] of Object.entries(layout)) {
+               const node = document.createElement('div');
+               node.id = id;
+               node.className = 'node';
+               
+               node.innerHTML = data.name; 
+               
+               node.style.left = data.x + '%';
+               node.style.top = data.y + '%';
+               node.style.backgroundColor = data.bg;
+               node.style.color = data.color;
+               canvas.appendChild(node);
+            }
+            
+            timeline.forEach(step => {
+                timers.push(setTimeout(() => {
+                    const sub = document.getElementById('subtitle-box');
+                    sub.innerText = step.text;
+                    sub.style.opacity = '1';
+                    step.action();
+                }, step.t));
+            });
+        }
+
+        window.onload = () => { setTimeout(startAnimation, 500); };
+    </script>
+</body>
+</html>
